@@ -3,7 +3,6 @@ package redislock_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math/rand"
 	"strconv"
 	"sync"
@@ -245,7 +244,23 @@ func TestMultiple_Obtain_concurrent(t *testing.T) {
 		t.Fatalf("expected %v, got %v", exp, got)
 	}
 
-	// let the keys to expired by itself
+	cleanup(t, rc, keys)
+}
+
+func cleanup(t *testing.T, rc *redis.Client, keys []string) {
+	t.Helper()
+	pipe := rc.Pipeline()
+	for _, key := range keys {
+		if err := pipe.Del(context.Background(), key).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func funcLockWithRandomizeOrder(wg *sync.WaitGroup, ctx context.Context, rc *redis.Client, errs chan error, numLocks *int32, keys []string) bool {
@@ -265,8 +280,6 @@ func funcLockWithRandomizeOrder(wg *sync.WaitGroup, ctx context.Context, rc *red
 		randIdx2 := rand.Intn(lenKeys - 1)
 		newKeys[randIdx], newKeys[randIdx2] = newKeys[randIdx2], newKeys[randIdx]
 	}
-
-	fmt.Println("randomize key : ", newKeys)
 
 	_, err := Obtain(ctx, rc, newKeys, time.Second*10, &Options{
 		RetryStrategy: LimitRetry(LinearBackoff(10*time.Millisecond), 10),
