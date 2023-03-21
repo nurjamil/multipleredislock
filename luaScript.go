@@ -17,6 +17,29 @@ var (
 	return res
 	`)
 
+	luaSetMultiple = redis.NewScript(`
+	local num_key = table.getn(KEYS)
+	local res
+	local failed
+	for i = 1, num_key do
+		if not redis.call('set', KEYS[i], ARGV[1], 'px', ARGV[2], 'nx') then 
+            res = i-1
+            failed = 1
+            break
+        end
+	end
+
+
+	if failed == 1 then
+		for i = 1, res do
+			redis.call('del',KEYS[i])
+		end
+		return 0
+	end
+
+	return 1
+	`)
+
 	luaRefreshMultiple = redis.NewScript(`
 	local num_key = table.getn(KEYS)
 	local res

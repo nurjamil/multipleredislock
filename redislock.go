@@ -61,6 +61,7 @@ func (c *Client) Obtain(ctx context.Context, keys []string, ttl time.Duration, o
 	}
 
 	var ticker *time.Ticker
+
 	for {
 		ok, err := c.obtain(ctx, keys, value, ttl)
 		if err != nil {
@@ -90,29 +91,19 @@ func (c *Client) Obtain(ctx context.Context, keys []string, ttl time.Duration, o
 }
 
 func (c *Client) obtain(ctx context.Context, keys []string, value string, ttl time.Duration) (bool, error) {
-	pipe := c.client.Pipeline()
-	cmdBools := make([]*redis.BoolCmd, 0, len(keys))
-	for _, key := range keys {
-		cmdBools = append(cmdBools, pipe.SetNX(ctx, key, value, ttl))
-	}
 
-	_, err := pipe.Exec(ctx)
+	ttlVal := strconv.FormatInt(int64(ttl/time.Millisecond), 10)
+	status, err := luaSetMultiple.Run(ctx, c.client, keys, value, ttlVal).Result()
 	if err != nil {
 		return false, err
+	} else if status == int64(1) {
+		return true, nil
+	} else if status == int64(0) {
+		return false, nil
 	}
 
-	for _, cmd := range cmdBools {
-		ok, err := cmd.Result()
-		if err != nil {
-			return false, err
-		}
+	return false, ErrNotObtained
 
-		if !ok {
-			return false, nil
-		}
-	}
-
-	return true, nil
 }
 
 func (c *Client) randomToken() (string, error) {
