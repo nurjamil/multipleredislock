@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,7 +22,6 @@ var (
 var redisOpts = &redis.Options{
 	Network: "tcp",
 	Addr:    "127.0.0.1:6379",
-	DB:      9,
 }
 
 func TestClient(t *testing.T) {
@@ -207,6 +207,14 @@ func TestObtain_concurrent(t *testing.T) {
 	}
 }
 
+func generateKeys(len int) []string {
+	var res = make([]string, 0, len)
+	for i := 0; i < len; i++ {
+		res = append(res, "s"+strconv.Itoa(i))
+	}
+
+	return res
+}
 func TestMultiple_Obtain_concurrent(t *testing.T) {
 	ctx := context.Background()
 	rc := redis.NewClient(redisOpts)
@@ -216,24 +224,15 @@ func TestMultiple_Obtain_concurrent(t *testing.T) {
 	numThreads := 100
 	wg := new(sync.WaitGroup)
 	errs := make(chan error, numThreads)
+	keys := generateKeys(100)
 	for i := 0; i < numThreads; i++ {
-		wg.Add(1)
+		wg.Add(5)
 
-		go func() {
-			defer wg.Done()
-
-			wait := rand.Int63n(int64(10 * time.Millisecond))
-			time.Sleep(time.Duration(wait))
-
-			_, err := Obtain(ctx, rc, []string{lockKey, lockKey2}, time.Second, nil)
-			if err == ErrNotObtained {
-				return
-			} else if err != nil {
-				errs <- err
-			} else {
-				atomic.AddInt32(&numLocks, 1)
-			}
-		}()
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
 	}
 	wg.Wait()
 
@@ -244,6 +243,35 @@ func TestMultiple_Obtain_concurrent(t *testing.T) {
 	if exp, got := 1, int(numLocks); exp != got {
 		t.Fatalf("expected %v, got %v", exp, got)
 	}
+
+	// let the keys to expired by itself
+}
+
+func funcLockWithRandomizeOrder(wg *sync.WaitGroup, ctx context.Context, rc *redis.Client, errs chan error, numLocks *int32, keys []string) bool {
+	defer wg.Done()
+
+	wait := rand.Int63n(int64(10 * time.Millisecond))
+	time.Sleep(time.Duration(wait))
+
+	lenKeys := len(keys)
+	times := lenKeys
+	for i := 0; i < times; i++ {
+		randIdx := rand.Intn(lenKeys - 1)
+		randIdx2 := rand.Intn(lenKeys - 1)
+		keys[randIdx], keys[randIdx2] = keys[randIdx2], keys[randIdx]
+	}
+
+	_, err := Obtain(ctx, rc, keys, time.Second*10, &Options{
+		RetryStrategy: LimitRetry(LinearBackoff(10*time.Millisecond), 10),
+	})
+	if err == ErrNotObtained {
+		return true
+	} else if err != nil {
+		errs <- err
+	} else {
+		atomic.AddInt32(numLocks, 1)
+	}
+	return false
 }
 
 func TestLock_Refresh(t *testing.T) {
@@ -318,7 +346,7 @@ func TestLock_Release_not_own(t *testing.T) {
 func quickObtain(t *testing.T, rc *redis.Client, ttl time.Duration) *Lock {
 	t.Helper()
 
-	lock, err := Obtain(context.Background(), rc, []string{lockKey}, ttl, nil)
+	lock, err := Obtain(context.Background(), rc, []string{lockKey, lockKey2}, ttl, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
