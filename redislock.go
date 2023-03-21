@@ -158,7 +158,7 @@ func (l *Lock) TTL(ctx context.Context) (time.Duration, error) {
 
 // Refresh extends the lock with a new TTL.
 // May return ErrNotObtained if refresh is unsuccessful.
-func (l *Lock) Refresh(ctx context.Context, ttl time.Duration, opt *Options) error {
+func (l *Lock) Refresh(ctx context.Context, ttl time.Duration) error {
 	ttlVal := strconv.FormatInt(int64(ttl/time.Millisecond), 10)
 	status, err := luaRefresh.Run(ctx, l.client.client, []string{l.key}, l.value, ttlVal).Result()
 	if err != nil {
