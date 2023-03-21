@@ -32,7 +32,7 @@ func main() {
 	ctx := context.Background()
 
 	// Try to obtain lock.
-	lock, err := locker.Obtain(ctx, "my-key", 100*time.Millisecond, nil)
+	lock, err := locker.Obtain(ctx, []string{"my-key"}, 100*time.Millisecond, nil)
 	if err == redislock.ErrNotObtained {
 		fmt.Println("Could not obtain lock!")
 	} else if err != nil {
