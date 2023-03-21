@@ -44,7 +44,7 @@ func Example() {
 	}
 
 	// Extend my lock.
-	if err := lock.Refresh(ctx, 100*time.Millisecond, nil); err != nil {
+	if err := lock.Refresh(ctx, 100*time.Millisecond); err != nil {
 		log.Fatalln(err)
 	}
 
