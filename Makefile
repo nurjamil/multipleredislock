@@ -1,7 +1,7 @@
 default: test
 
 test:
-	go test ./...
+	go test -v ./...
 
 test-race:
 	go test ./... -race

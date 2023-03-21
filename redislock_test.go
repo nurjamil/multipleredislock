@@ -3,6 +3,7 @@ package redislock_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
 	"strconv"
 	"sync"
@@ -253,15 +254,21 @@ func funcLockWithRandomizeOrder(wg *sync.WaitGroup, ctx context.Context, rc *red
 	wait := rand.Int63n(int64(10 * time.Millisecond))
 	time.Sleep(time.Duration(wait))
 
-	lenKeys := len(keys)
+	newKeys := make([]string, len(keys))
+
+	copy(newKeys, keys)
+
+	lenKeys := len(newKeys)
 	times := lenKeys
 	for i := 0; i < times; i++ {
 		randIdx := rand.Intn(lenKeys - 1)
 		randIdx2 := rand.Intn(lenKeys - 1)
-		keys[randIdx], keys[randIdx2] = keys[randIdx2], keys[randIdx]
+		newKeys[randIdx], newKeys[randIdx2] = newKeys[randIdx2], newKeys[randIdx]
 	}
 
-	_, err := Obtain(ctx, rc, keys, time.Second*10, &Options{
+	fmt.Println("randomize key : ", newKeys)
+
+	_, err := Obtain(ctx, rc, newKeys, time.Second*10, &Options{
 		RetryStrategy: LimitRetry(LinearBackoff(10*time.Millisecond), 10),
 	})
 	if err == ErrNotObtained {
