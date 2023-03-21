@@ -1,4 +1,4 @@
-module github.com/bsm/redislock
+module github.com/nurjamil/multipleredislock
 
 go 1.17
 
