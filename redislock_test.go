@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/bsm/redislock"
+	. "github.com/nurjamil/multipleredislock"
 	"github.com/redis/go-redis/v9"
 )
 
