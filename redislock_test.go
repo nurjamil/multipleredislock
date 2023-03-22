@@ -224,15 +224,17 @@ func TestMultiple_Obtain_concurrent(t *testing.T) {
 	numThreads := 100
 	wg := new(sync.WaitGroup)
 	errs := make(chan error, numThreads)
-	keys := generateKeys(100)
 	for i := 0; i < numThreads; i++ {
 		wg.Add(5)
+		keys := generateKeys(rand.Intn(19) + 1)
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
+		wg.Wait()
+		cleanup(t, rc, keys)
 
-		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
-		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
-		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
-		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
-		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
 	}
 	wg.Wait()
 
@@ -240,11 +242,10 @@ func TestMultiple_Obtain_concurrent(t *testing.T) {
 	for err := range errs {
 		t.Fatal(err)
 	}
-	if exp, got := 1, int(numLocks); exp != got {
+	if exp, got := 500, int(numLocks); exp != got {
 		t.Fatalf("expected %v, got %v", exp, got)
 	}
 
-	cleanup(t, rc, keys)
 }
 
 func cleanup(t *testing.T, rc *redis.Client, keys []string) {
@@ -266,9 +267,6 @@ func cleanup(t *testing.T, rc *redis.Client, keys []string) {
 func funcLockWithRandomizeOrder(wg *sync.WaitGroup, ctx context.Context, rc *redis.Client, errs chan error, numLocks *int32, keys []string) bool {
 	defer wg.Done()
 
-	wait := rand.Int63n(int64(10 * time.Millisecond))
-	time.Sleep(time.Duration(wait))
-
 	newKeys := make([]string, len(keys))
 
 	copy(newKeys, keys)
@@ -276,12 +274,18 @@ func funcLockWithRandomizeOrder(wg *sync.WaitGroup, ctx context.Context, rc *red
 	lenKeys := len(newKeys)
 	times := lenKeys
 	for i := 0; i < times; i++ {
-		randIdx := rand.Intn(lenKeys - 1)
-		randIdx2 := rand.Intn(lenKeys - 1)
+		randIdx := rand.Intn(lenKeys)
+		randIdx2 := rand.Intn(lenKeys)
+		if randIdx > 0 {
+			randIdx -= 1
+		}
+		if randIdx2 > 0 {
+			randIdx2 -= 1
+		}
 		newKeys[randIdx], newKeys[randIdx2] = newKeys[randIdx2], newKeys[randIdx]
 	}
 
-	_, err := Obtain(ctx, rc, newKeys, time.Second*10, &Options{
+	lock, err := Obtain(ctx, rc, newKeys, time.Second*5, &Options{
 		RetryStrategy: LimitRetry(LinearBackoff(10*time.Millisecond), 10),
 	})
 	if err == ErrNotObtained {
@@ -289,7 +293,9 @@ func funcLockWithRandomizeOrder(wg *sync.WaitGroup, ctx context.Context, rc *red
 	} else if err != nil {
 		errs <- err
 	} else {
+		time.Sleep(time.Millisecond * 10) // imitate real world usecase
 		atomic.AddInt32(numLocks, 1)
+		lock.Release(ctx)
 	}
 	return false
 }
