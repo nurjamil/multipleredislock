@@ -150,6 +150,44 @@ func TestObtain_retry_failure(t *testing.T) {
 	}
 }
 
+func TestObtain_Empty_Keys(t *testing.T) {
+	ctx := context.Background()
+	rc := redis.NewClient(redisOpts)
+	defer teardown(t, rc)
+
+	// obtain for 50ms
+	lock1 := quickObtain(t, rc, 50*time.Millisecond)
+	defer lock1.Release(ctx)
+
+	// lock again with linar retry - 2x for 5ms
+	_, err := Obtain(ctx, rc, []string{}, time.Second, &Options{
+		RetryStrategy: LimitRetry(LinearBackoff(10*time.Millisecond), 2),
+	})
+
+	if exp, got := ErrEmptyKeys, err; !errors.Is(got, exp) {
+		t.Fatalf("expected %v, got %v", exp, got)
+	}
+}
+
+func TestObtain_Duplicate_Keys(t *testing.T) {
+	ctx := context.Background()
+	rc := redis.NewClient(redisOpts)
+	defer teardown(t, rc)
+
+	// obtain for 50ms
+	lock1 := quickObtain(t, rc, 50*time.Millisecond)
+	defer lock1.Release(ctx)
+
+	// lock again with linar retry - 2x for 5ms
+	_, err := Obtain(ctx, rc, []string{"key1", "key1"}, time.Second, &Options{
+		RetryStrategy: LimitRetry(LinearBackoff(10*time.Millisecond), 2),
+	})
+
+	if exp, got := ErrDuplicateKeys, err; !errors.Is(got, exp) {
+		t.Fatalf("expected %v, got %v", exp, got)
+	}
+}
+
 func TestMultipleObtain_retry_failure(t *testing.T) {
 	ctx := context.Background()
 	rc := redis.NewClient(redisOpts)
@@ -215,6 +253,27 @@ func generateKeys(len int) []string {
 
 	return res
 }
+
+func pickKeysRandomly(t *testing.T, keys []string, length int) []string {
+	if length > len(keys) {
+		return shuffleKeys(keys)
+	}
+
+	copyKeys := make([]string, len(keys))
+	copy(copyKeys, keys)
+
+	res := make([]string, 0, length)
+
+	for i := 0; i < length && i < len(copyKeys); i++ {
+		idx := rand.Int() % len(copyKeys)
+		res = append(res, copyKeys[idx])
+
+		copyKeys[idx] = copyKeys[len(copyKeys)-1]
+		copyKeys = copyKeys[:len(copyKeys)-1]
+	}
+
+	return res
+}
 func TestMultiple_Obtain_concurrent(t *testing.T) {
 	ctx := context.Background()
 	rc := redis.NewClient(redisOpts)
@@ -226,12 +285,12 @@ func TestMultiple_Obtain_concurrent(t *testing.T) {
 	errs := make(chan error, numThreads)
 	for i := 0; i < numThreads; i++ {
 		wg.Add(5)
-		keys := generateKeys(rand.Intn(19) + 1)
-		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
-		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
-		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
-		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
-		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, keys)
+		keys := generateKeys(rand.Intn(99) + 1)
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, pickKeysRandomly(t, keys, 10))
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, pickKeysRandomly(t, keys, 10))
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, pickKeysRandomly(t, keys, 10))
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, pickKeysRandomly(t, keys, 10))
+		go funcLockWithRandomizeOrder(wg, ctx, rc, errs, &numLocks, pickKeysRandomly(t, keys, 10))
 		wg.Wait()
 		cleanup(t, rc, keys)
 
@@ -264,9 +323,7 @@ func cleanup(t *testing.T, rc *redis.Client, keys []string) {
 	}
 }
 
-func funcLockWithRandomizeOrder(wg *sync.WaitGroup, ctx context.Context, rc *redis.Client, errs chan error, numLocks *int32, keys []string) bool {
-	defer wg.Done()
-
+func shuffleKeys(keys []string) []string {
 	newKeys := make([]string, len(keys))
 
 	copy(newKeys, keys)
@@ -284,6 +341,15 @@ func funcLockWithRandomizeOrder(wg *sync.WaitGroup, ctx context.Context, rc *red
 		}
 		newKeys[randIdx], newKeys[randIdx2] = newKeys[randIdx2], newKeys[randIdx]
 	}
+
+	return newKeys
+}
+
+func funcLockWithRandomizeOrder(wg *sync.WaitGroup, ctx context.Context, rc *redis.Client, errs chan error, numLocks *int32, keys []string) bool {
+	defer wg.Done()
+
+	newKeys := shuffleKeys(keys)
+	// fmt.Println("Keys : ", newKeys)
 
 	lock, err := Obtain(ctx, rc, newKeys, time.Second*5, &Options{
 		RetryStrategy: LimitRetry(LinearBackoff(10*time.Millisecond), 10),
