@@ -20,6 +20,12 @@ var (
 
 	// ErrLockNotHeld is returned when trying to release an inactive lock.
 	ErrLockNotHeld = errors.New("redislock: lock not held")
+
+	// ErrEmptyKeys is returned when trying to obtain lock without a key.
+	ErrEmptyKeys = errors.New("redislock: keys is empty")
+
+	// ErrDuplicateKeys is returned when trying to obtain lock with a duplicate key.
+	ErrDuplicateKeys = errors.New("redislock: duplicate key")
 )
 
 // RedisClient is a minimal client interface.
@@ -44,6 +50,11 @@ func New(client RedisClient) *Client {
 // Obtain tries to obtain a new lock using a key with the given TTL.
 // May return ErrNotObtained if not successful.
 func (c *Client) Obtain(ctx context.Context, keys []string, ttl time.Duration, opt *Options) (*Lock, error) {
+	// Validate keys
+	if err := c.validateKeys(keys); err != nil {
+		return nil, err
+	}
+
 	// Create a random token
 	token, err := c.randomToken()
 	if err != nil {
@@ -118,6 +129,22 @@ func (c *Client) randomToken() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(c.tmp), nil
+}
+
+func (c *Client) validateKeys(keys []string) error {
+	if len(keys) == 0 {
+		return ErrEmptyKeys
+	}
+
+	set := make(map[string]struct{})
+	for _, key := range keys {
+		if _, ok := set[key]; ok {
+			return ErrDuplicateKeys
+		}
+		set[key] = struct{}{}
+	}
+
+	return nil
 }
 
 // --------------------------------------------------------------------
